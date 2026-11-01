@@ -17,6 +17,9 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -123,6 +126,9 @@ public final class InsightsController {
         // Health check
         server.createContext("/api/v1/ai/health", new JsonHandler(() -> Map.of("status", "UP")));
 
+        // Static file serving for demo.html
+        server.createContext("/", new StaticFileHandler());
+
         server.start();
         System.out.println("AI REST server running at http://localhost:" + PORT + "/api/v1/ai/*");
         System.out.println("Endpoints:");
@@ -194,6 +200,58 @@ public final class InsightsController {
 
         private String escape(String s) {
             return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+        }
+    }
+
+    static class StaticFileHandler implements HttpHandler {
+        private static final Path STATIC_DIR = Paths.get("src/main/resources/static").toAbsolutePath();
+
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+
+            String path = exchange.getRequestURI().getPath();
+            if (path.equals("/") || path.equals("")) {
+                path = "/demo.html";
+            }
+
+            Path file = STATIC_DIR.resolve(path.substring(1)).normalize();
+            if (!file.startsWith(STATIC_DIR)) {
+                sendError(exchange, 403, "Forbidden");
+                return;
+            }
+
+            if (!Files.exists(file) || Files.isDirectory(file)) {
+                sendError(exchange, 404, "Not found");
+                return;
+            }
+
+            String mime = Files.probeContentType(file);
+            if (mime == null) {
+                mime = "application/octet-stream";
+            }
+
+            byte[] bytes = Files.readAllBytes(file);
+            exchange.getResponseHeaders().set("Content-Type", mime + "; charset=UTF-8");
+            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
+            }
+        }
+
+        private void sendError(HttpExchange exchange, int code, String msg) throws IOException {
+            String body = "{\"error\":\"" + msg + "\"}";
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
+            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+            exchange.sendResponseHeaders(code, bytes.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
+            }
         }
     }
 }
